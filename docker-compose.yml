@@ -1,0 +1,37 @@
+﻿services:
+  todo:
+    image: todo
+    build:
+      context: .
+      dockerfile: Todo/Dockerfile
+    ports:
+      - "8085:8080"
+    depends_on:
+      - postgres
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    networks:
+      - todo-network
+  
+  postgres:
+    image: postgres:16
+    container_name: todo_db
+    restart: always
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: todo
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - todo-network
+
+volumes:
+  pg_data:
+    driver: local
+    
+networks:
+  todo-network:
+    driver: bridge
