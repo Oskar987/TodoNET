@@ -1,7 +1,9 @@
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
 using Todo.Data;
 using Todo.Dtos;
-using Todo.Models;
+using Todo.Services;
 
 namespace Todo.Endpoints;
 
@@ -9,70 +11,91 @@ public static class Endpoints
 {
 	public static void MapEndpoints(this WebApplication app)
 	{
-		app.MapGet("/todos", ([FromServices] ApplicationDataContext context) =>
-		{
-			var todos = context.TodoItems.ToList();
-			var todoItemDtos = new List<ReadTodoItemDto>();
-			foreach (var todo in todos)
+		app.MapGet("/todos", async (
+				[FromQuery] DateTime? date,
+				[FromServices] ITodoService todoService,
+				[FromServices] IValidator<DateTime?> validator) =>
 			{
-				 todoItemDtos.Add(new ReadTodoItemDto(todo.Id, todo.Title, todo.Description, todo.IsDone));
-			}
-			return Results.Ok(todoItemDtos);
-		});
-		
-		app.MapGet("/todos/{id}", (Guid id, 
-			[FromServices] ApplicationDataContext context) => 
-		{
-			var todo = context.TodoItems.FirstOrDefault(x => x.Id == id);
-			return todo is not null ? 
-				Results.Ok(new ReadTodoItemDto(todo.Id, todo.Title, todo.Description, todo.IsDone)) 
-				: Results.NotFound();
-		});
-		
-		app.MapPost("/todos", (CreateTodoItemDto dto, [FromServices] ApplicationDataContext context) =>
-		{
-			var todoItem = new TodoItem
-			{
-				Title = dto.Title,
-				Description = dto.Description
-			};
-			
-			context.TodoItems.Add(todoItem);
-			context.SaveChanges();
-			
-			return Results.Created($"/todos/{todoItem.Id}",
-				new ReadTodoItemDto(todoItem.Id, todoItem.Title, todoItem.Description, todoItem.IsDone));
-		});
-		
-		app.MapPut("/todos/{id}", (Guid id, Models.TodoItem updatedTodo, [FromServices] ApplicationDataContext context) => 
-		{
-			var todo = context.TodoItems.FirstOrDefault(x => x.Id == id);
-			
-			if (todo is not null)
-			{
-				context.TodoItems.Remove(todo);
-				context.TodoItems.Add(updatedTodo);
-
-				context.SaveChanges();
+				if (date.HasValue)
+				{
+					var validationResult = await validator.ValidateAsync(date);
+					if (!validationResult.IsValid)
+					{
+						return Results.ValidationProblem(ToDictionary(validationResult));
+					}	
+				}
 				
-				return Results.NoContent();
-			}
-
-			return Results.NotFound();
-		});
+				var todos = await todoService.GetAllAsync(date);
+				return Results.Ok(todos);
+			})
+			.Produces<List<ReadTodoItemDto>>(StatusCodes.Status200OK)
+			.ProducesValidationProblem();
 		
-		app.MapDelete("todos/{id}", (Guid id, [FromServices] ApplicationDataContext context) => 
+		app.MapGet("/todos/{id}", async (Guid id,
+			[FromServices] ITodoService todoService) =>
 		{
-			var todo = context.TodoItems.FirstOrDefault(x => x.Id == id);
-			if (todo is not null)
+			var todo = await todoService.GetByIdAsync(id);
+			return todo is not null ? Results.Ok(todo) : Results.NotFound();
+		})
+		.Produces<ReadTodoItemDto>()
+		.Produces(StatusCodes.Status404NotFound);
+		
+		app.MapPost("/todos", async (
+			CreateTodoItemDto dto,
+			[FromServices] ITodoService todoService,
+			[FromServices] IValidator<CreateTodoItemDto> validator) =>
+		{
+			var validationResult = await validator.ValidateAsync(dto);
+
+			if (!validationResult.IsValid)
 			{
-				context.TodoItems.Remove(todo);
-				context.SaveChanges();
-				
-				return Results.NoContent();
+				return Results.ValidationProblem(ToDictionary(validationResult));
 			}
 
-			return Results.NotFound();            
-		});
+			var result = await todoService.CreateAsync(dto);
+			return Results.Created($"/todos/{result.Id}", result);
+		})
+		.Produces<ReadTodoItemDto>(StatusCodes.Status200OK)
+		.ProducesValidationProblem();
+		
+		app.MapPut("/todos/{id}", async (
+			Guid id, 
+			UpdateTodoItemDto dto,
+			[FromServices] ITodoService todoService,
+			[FromServices] IValidator<UpdateTodoItemDto> validator) => 
+		{
+			var validationResult = await validator.ValidateAsync(dto);
+
+			if (!validationResult.IsValid)
+			{
+				return Results.ValidationProblem(ToDictionary(validationResult));
+			}
+
+			var updated = await todoService.UpdateAsync(id, dto);
+			return updated ? Results.NoContent() : Results.NotFound();
+		})
+		.Produces(StatusCodes.Status204NoContent)
+		.Produces(StatusCodes.Status404NotFound)
+		.ProducesValidationProblem();;
+		
+		app.MapDelete("todos/{id}", async (
+			Guid id,
+			[FromServices] ITodoService todoService,
+			[FromServices] ApplicationDataContext context) =>
+		{
+			var deleted = await todoService.DeleteAsync(id);
+			return deleted ? Results.NoContent() : Results.NotFound();
+		})
+		.Produces(StatusCodes.Status204NoContent)
+		.Produces(StatusCodes.Status404NotFound);
+	}
+
+	private static Dictionary<string, string[]> ToDictionary(ValidationResult validationResult)
+	{
+		return validationResult.Errors
+			.GroupBy(x => x.PropertyName)
+			.ToDictionary(
+				g => g.Key,
+				g => g.Select(x => x.ErrorMessage).ToArray());
 	}
 }
