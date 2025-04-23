@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Todo.Data.Configurations;
 using Todo.Models;
 
 namespace Todo.Data;
@@ -13,6 +14,7 @@ public class ApplicationDataContext : DbContext
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{
-		modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDataContext).Assembly);
+		base.OnModelCreating(modelBuilder);
+		modelBuilder.ApplyConfiguration(new TodoItemConfiguration());
 	}
 }
